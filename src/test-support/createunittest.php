@@ -1,4 +1,5 @@
 <?php
+
 /**
  *    Copyright 2012 MegaFon
  *
@@ -14,71 +15,141 @@
  *   See the License for the specific language governing permissions and
  *    limitations under the License.
  */
-
 $WORK_DIR = implode('/', explode('/', str_replace('\\', '/', __DIR__), -2));
-
-ini_set('log_errors', 'on');
-ini_set('error_log', $WORK_DIR . '/target/php_errors.txt');
-
 $TEST_CASES_XML_FOLDER = '/generated/test-cases-xml';
 
+ini_set("pcre.backtrack_limit", "1000000000000"); // !!! default in PHP 100000
+ini_set('log_errors', 'on');
+ini_set('error_log', $WORK_DIR . '/generated/php_errors.txt');
 
-/* load xml-describe tests for parser */
+/* load xml-describe tests for evaluator */
+$modes = array('parser', 'evaluator');
 
-$filename = $WORK_DIR . $TEST_CASES_XML_FOLDER . '/parser/cases.json';
-$f = fopen($filename, 'rb');
-if ($f) {
-	$xmlTestArray = array();
-	$fileList = json_decode(fread($f, filesize($filename)));
-	if ($fileList && is_array($fileList)) {
-		$fstr = '';
-		foreach ($fileList as $fileTest) {
+foreach ($modes as $mode) {
+	$index = 0;
+	$ok = false;
+	$filename = $WORK_DIR . '/src/test-support/' . $mode . '_set_1.json';
+	$dir = $WORK_DIR . $TEST_CASES_XML_FOLDER . '/' . $mode;
+	$f = fopen($filename, 'rb');
+
+	if ($f) {
+		$fileList = json_decode(fread($f, filesize($filename)));
+		if ($fileList && is_array($fileList)) {
 			try {
-				$testFileContent = file_get_contents($WORK_DIR . $TEST_CASES_XML_FOLDER . '/parser/' . $fileTest);
-				$testFileContent = preg_replace('/<!--.*-->/Us', '', $testFileContent);
-				$suites = array();
-				if (preg_match_all('/<suite\s.*>(.*)<\/suite\s*>/Uis', $testFileContent, $suites)) {
-					if (isset($suites[1]) && is_array($suites[1])) {
-						foreach ($suites[1] as $suite) {
-							$cases = array();
-							if (preg_match_all('/<case\s*>(.*)<\/case\s*>/Uis', $suite, $cases)) {
-								if (isset($cases[1]) && is_array($cases[1])) {
-									foreach ($cases[1] as $key => $case) {
-										$input = $expected = $exception = null;
-										$input = preg_replace('/^(.*input>)(.*)(<\/input.*)$/Uis', "$2", $case);
-										$input = str_replace('&#xD;', "\n", $input); // Хак для передачи параметра в Data Provider
-										if (preg_match('/<\/exception/', $case))
-											$exception = preg_replace('/(.*exception.*>)(.*)(<\/exception.*)$/Uis', "$2", $case);
-										elseif (preg_match('/<\/expected/', $case))
-											$expected = preg_replace('/(.*expected.*>)(.*)(<\/expected.*)$/Uis', "$2", $case);
-										$fstr.= 'array(';
-										$fstr.='urldecode(\'' . urlencode($input) . '\'),';
-										$fstr.='urldecode(\'' . urlencode($expected) . '\'),';
-										$fstr.='urldecode(\'' . urlencode($exception) . '\'),';
-										$fstr.='),';
-									}
-								}
+				$estr = "";
+				foreach ($fileList as $fileTest) {
+
+					$testFileContent = file_get_contents($dir . '/' . $fileTest);
+					$testFileContent = str_replace(':baseURI:', $dir . '/', $testFileContent);
+					$xml = simplexml_load_string($testFileContent);
+
+					foreach ($xml->suite as $suite) {
+						foreach ($suite->case as $case) {
+							$function = $global = $expected = $exception = $context = null;
+							$input = strval($case->input);
+							if (isset($case->expected)) {
+								$expected = strval($case->expected);
 							}
+							if (isset($case->exception)) {
+								$exception['line'] = strval($case->exception->line);
+								$exception['expected'] = strval($case->exception->expected);
+								$exception['found'] = strval($case->exception->found);
+							}
+							if (isset($case->context))
+								$context = strval($case->context);
+							if (isset($case->global)) {
+								$global = array();
+								$baseUrl = (isset($case->global['name']) && (strval($case->global['name']) == 'baseURI')) ? strval($case->global['value']) : '.';
+								$global['baseURI'] = $baseUrl;
+							}
+							if (isset($case->function)) {
+								$function = array();
+								$function['name'] = strval($case->function['name']);
+								$function['return'] = strval($case->function['return']);
+								$function['body'] = strval($case->function);
+								if (isset($case->function['node']))
+									$function['node'] = strval($case->function['node']);
+								else
+									$function['node'] = 'HistoneGlobal';
+							}
+
+							$estr.= 'array(';
+							$estr.='urldecode(\'' . urlencode($input) . '\'),';
+							if ($expected) {
+								$estr.='urldecode(\'' . urlencode($expected) . '\'),';
+							} else {
+								$estr.='\'\',';
+							}
+							if ($exception) {
+								$estr.='array(\'line\'=>\'' . $exception['line'] . '\',';
+								$estr.='\'expected\'=>urldecode(\'' . urlencode($exception['expected']) . '\'),';
+								$estr.='\'found\'=>urldecode(\'' . urlencode($exception['found']) . '\')),';
+							} else {
+								$estr.='\'\',';
+							}
+							if ($mode == 'evaluator') {
+								if ($context)
+									$estr.='urldecode(\'' . urlencode($context) . '\'),';
+								else
+									$estr.='\'\',';
+
+								if ($global)
+									$estr.='array(\'baseURI\'=>urldecode(\'' . urlencode($global['baseURI']) . '\')),';
+
+								else
+									$estr.='\'\',';
+								if ($function) {
+									$estr.='array(\'name\'=>\'' . $function['name'] . '\',';
+									$estr.='\'return\'=>\'' . $function['return'] . '\',';
+									$estr.='\'node\'=>\'' . $function['node'] . '\',';
+									$estr.='\'body\'=>urldecode(\'' . urlencode($function['body']) . '\')),';
+								} else
+									$estr.='\'\',';
+							}
+							$estr.='),' . '/*' . $index++ . ' - input: ' . $input .
+								($expected ? ' | expected: ' . $expected : '') .
+								($exception ? ' | exception: ' . print_r($exception, true) : '') .
+								( $context ? ' | context: ' . $context : '' ) .
+								($global ? ' | global: ' . print_r($global, true) : '') .
+								($function ? ' | function: ' . print_r($function, true) : '') .
+								"*/\r\n";
 						}
-					}
+					} //suites
 				}
+				echo saveGeneratedTest($mode, $estr);
+				$ok = true;
 			} catch (Exception $e) {
 				throw new Exception('badTestFile');
 			}
-		}// end foreach 
-		$filename = $WORK_DIR . '/generated/generated-tests/ParserAcceptanceTest.php';
-		if (file_exists($filename)) {
-			$origin = file_get_contents($filename);
-			$result = preg_replace('|/\*\s*module_start\s*\*/(.*)/\*\s*module_end\s*\*/|Uis', '/*module_start*/' . $fstr . '/*module_end*/', $origin);
+		}
+	}
+	if (!$ok)
+		throw new Exception('badTestFile');
+}
+
+function saveGeneratedTest($mode, $estr) {
+	global $WORK_DIR, $index;
+	$mode = ucfirst(strtolower($mode));
+	$filename = $WORK_DIR . '/generated/generated-tests/' . $mode . 'AcceptanceTest.php';
+	$result = '';
+	if (file_exists($filename)) {
+		$origin = file_get_contents($filename);
+		$matches = array();
+		$count = preg_match('|module' . $mode . '_start(.*)module' . $mode . '_end|Uis', $origin, $matches);
+		if ($count && isset($matches[1])) {
+			$result = str_replace($matches[1], '*/' . $estr . '/*', $origin);
+		}
+		if (strcmp($result, $origin) !== 0) {
 			$f = fopen($filename, 'wb');
 			if ($f) {
 				fwrite($f, $result);
 				fclose($f);
-				return;
+				return $mode . "Data Provider array created - $index tests; | ";
 			}
 		}
 	}
+	else
+		return ('badTestFile - ' . $filename);
 }
 
-throw new Exception('badTestFile');
 ?>
