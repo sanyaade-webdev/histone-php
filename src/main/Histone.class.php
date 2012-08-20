@@ -103,33 +103,43 @@ class Histone {
 	public function parseFile($fileName = '') {
 		if (!$fileName)
 			self::internalError('filename  is empty string');
-
-		try {
-			if (is_file($this->baseURI))
-				$dir = dirname($this->baseURI);
-			else
-				$dir = $this->baseURI;
-			if (file_exists($fileName)) {
-				$this->baseURI = $fileName;
-				$path = $fileName;
-			} elseif (file_exists(rtrim($dir, '/') . '/' . $fileName)) {
-				$path = rtrim($dir, '/') . '/' . $fileName;
-				$this->baseURI = $path;
-			} else {
-				$this->template = '';
+		$uriResolver = Histone::getUriResolver();
+		if ($uriResolver) {
+			$resolve = @call_user_func($uriResolver, $fileName, $this->baseURI);
+			if ($resolve === null)
+				return new HistoneUndefined();
+			else {
+				$this->baseURI = $resolve['uri'];
+				$this->parseString($resolve['data']);
+			}
+		} else {
+			try {
+				if (is_file($this->baseURI))
+					$dir = dirname($this->baseURI);
+				else
+					$dir = $this->baseURI;
+				if (file_exists($fileName)) {
+					$this->baseURI = $fileName;
+					$path = $fileName;
+				} elseif (file_exists(rtrim($dir, '/') . '/' . $fileName)) {
+					$path = rtrim($dir, '/') . '/' . $fileName;
+					$this->baseURI = $path;
+				} else {
+					$this->template = '';
+					return;
+				}
+				$template = file_get_contents($path);
+				if ($template) {
+					$this->parseString($template);
+				} else {
+					$this->template = '';
+				}
 				return;
-			}
-			$template = file_get_contents($path);
-			if ($template) {
-				$this->parseString($template);
-			} else {
+			} catch (ParseError $e) {
+				$this->template = '';
+			} catch (Exception $e) {
 				$this->template = '';
 			}
-			return;
-		} catch (ParseError $e) {
-			$this->template = '';
-		} catch (Exception $e) {
-			$this->template = '';
 		}
 	}
 
@@ -431,9 +441,8 @@ class Histone {
 //					if ($length + $fragment >= 0)
 //						$subject = $subject[$length + $fragment];
 //					else
-						return new HistoneUndefined();
-				}
-				elseif ($fragment > 0) {
+					return new HistoneUndefined();
+				} elseif ($fragment > 0) {
 					return new HistoneUndefined();
 				}
 			} else if ($fragment instanceof HistoneUndefined) {

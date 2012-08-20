@@ -641,7 +641,7 @@ class HistoneGlobal extends HistoneType {
 		$uriResolver = Histone::getUriResolver();
 		if ($uriResolver) {
 			$resolve = @call_user_func($uriResolver, $href, $base);
-			if ($x === null)
+			if ($resolve === null)
 				return new HistoneUndefined();
 			else {
 				try {
